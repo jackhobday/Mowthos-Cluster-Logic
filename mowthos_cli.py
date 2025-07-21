@@ -28,9 +28,11 @@ class MowthosCLI:
 Options:
 1. Input Host Home Address
 2. View Neighbor Addresses for each Host Home
-3. Exit
+3. Check if Address Qualifies for Existing Cluster
+4. Test Road-Aware Adjacency (NEW)
+5. Exit
 
-Enter your choice (1-3): """, end="")
+Enter your choice (1-5): """, end="")
         
     def input_host_home(self):
         """Handle option 1: Input Host Home Address."""
@@ -74,26 +76,120 @@ Enter your choice (1-3): """, end="")
             
         input("\nPress Enter to continue...")
         
+    def check_address_qualification(self):
+        """Handle option 3: Check if Address Qualifies for Existing Cluster."""
+        self.clear_screen()
+        self.print_header()
+        
+        print("🔍 ADDRESS QUALIFICATION CHECK")
+        print("=" * 50)
+        
+        if not self.host_homes:
+            print("❌ No host homes have been registered yet.")
+            print("   Please add some host homes first (Option 1).")
+            input("\nPress Enter to continue...")
+            return
+        
+        # Get address to check from user
+        address_to_check = input("Enter the address to check: ").strip()
+        
+        if not address_to_check:
+            print("❌ Address cannot be empty!")
+            input("Press Enter to continue...")
+            return
+            
+        print(f"\n🔍 Checking qualification for: {address_to_check}")
+        print("⏳ Analyzing against existing host homes...")
+        
+        try:
+            # Geocode the address to check
+            check_lat, check_lng = self.geocode_address(address_to_check)
+            if not check_lat or not check_lng:
+                print("❌ Could not geocode the address to check.")
+                input("Press Enter to continue...")
+                return
+                
+            # Check against each host home
+            qualifying_hosts = []
+            
+            for host_address, neighbors in self.host_homes.items():
+                print(f"\n📋 Checking against host: {host_address}")
+                
+                # Geocode the host home
+                host_lat, host_lng = self.geocode_address(host_address)
+                if not host_lat or not host_lng:
+                    print("   ⚠️  Could not geocode host address, skipping...")
+                    continue
+                
+                # Check proximity (0.05 miles)
+                distance = self.calculate_distance(host_lat, host_lng, check_lat, check_lng)
+                if distance > 0.05:
+                    print(f"   ❌ Too far away ({distance:.3f} miles)")
+                    continue
+                
+                # Test adjacency using new API endpoint that includes side-of-street logic
+                if self.test_adjacency_with_street(host_address, address_to_check):
+                    print("   ✅ QUALIFIED!")
+                    qualifying_hosts.append({
+                        'host_address': host_address,
+                        'distance': distance,
+                        'neighbors': neighbors
+                    })
+                else:
+                    print("   ❌ Not adjacent (different side of street or other issue)")
+                
+                # Rate limiting
+                time.sleep(0.1)
+            
+            # Display results
+            print(f"\n" + "=" * 50)
+            print("📊 QUALIFICATION RESULTS")
+            print("=" * 50)
+            
+            if qualifying_hosts:
+                print(f"✅ ADDRESS QUALIFIES for {len(qualifying_hosts)} cluster(s)!")
+                print("\nQualifying host homes:")
+                
+                for i, qualifier in enumerate(qualifying_hosts, 1):
+                    print(f"\n🏠 {i}. {qualifier['host_address']}")
+                    print(f"   📏 Distance: {qualifier['distance']:.3f} miles")
+                    print(f"   👥 Current neighbors: {len(qualifier['neighbors'])}")
+                    if qualifier['neighbors']:
+                        print("   📍 Neighbors:")
+                        for j, neighbor in enumerate(qualifier['neighbors'], 1):
+                            print(f"      {j}. {neighbor}")
+            else:
+                print("❌ ADDRESS DOES NOT QUALIFY for any existing cluster.")
+                print("\nPossible reasons:")
+                print("   • Too far from host homes (> 0.05 miles)")
+                print("   • Different side of street")
+                print("   • Road barriers between properties")
+                print("   • No host homes registered yet")
+                
+        except Exception as e:
+            print(f"\n❌ Error checking qualification: {str(e)}")
+            
+        input("\nPress Enter to continue...")
+        
     def discover_neighbors_for_host(self, host_address: str) -> List[str]:
-        """Discover qualified neighbors for a host home using our API."""
+        """Discover qualified neighbors for a given host address."""
         qualified_neighbors = []
         
-        # Geocode the host home
+        # Geocode the host address
         host_lat, host_lng = self.geocode_address(host_address)
-        if not host_lat or not host_lng:
-            raise Exception("Could not geocode host address")
-            
-        # Generate potential nearby addresses
-        potential_neighbors = self.generate_nearby_addresses(host_lat, host_lng, host_address)
+        if host_lat is None or host_lng is None:
+            print(f"❌ Could not geocode host address: {host_address}")
+            return []
         
-        for neighbor_address in potential_neighbors:
-            # Check same side of street first
-            if not self.is_same_side_of_street(host_address, neighbor_address):
-                continue
-                
-            # Geocode the neighbor
+        # Generate potential nearby addresses
+        nearby_addresses = self.generate_nearby_addresses(host_lat, host_lng, host_address)
+        
+        print(f"🔍 Testing {len(nearby_addresses)} potential neighbors...")
+        
+        for neighbor_address in nearby_addresses:
+            # Geocode the neighbor address
             neighbor_lat, neighbor_lng = self.geocode_address(neighbor_address)
-            if not neighbor_lat or not neighbor_lng:
+            if neighbor_lat is None or neighbor_lng is None:
                 continue
                 
             # Check proximity (0.05 miles)
@@ -101,8 +197,8 @@ Enter your choice (1-3): """, end="")
             if distance > 0.05:
                 continue
                 
-            # Test adjacency using our API
-            if self.test_adjacency(host_lat, host_lng, neighbor_lat, neighbor_lng):
+            # Test adjacency using new API endpoint that includes side-of-street logic
+            if self.test_adjacency_with_street(host_address, neighbor_address):
                 qualified_neighbors.append(neighbor_address)
                 
             # Rate limiting
@@ -182,6 +278,69 @@ Enter your choice (1-3): """, end="")
             return data.get("adjacent", False)
         return False
         
+    def test_adjacency_with_street(self, host_address: str, neighbor_address: str) -> bool:
+        """Test if two addresses are adjacent including side-of-street logic using our API."""
+        resp = requests.post(f"{BASE_URL}/clusters/test_adjacency_with_street", json={
+            "address1": host_address,
+            "address2": neighbor_address
+        })
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("adjacent", False)
+        return False
+        
+    def test_adjacency_with_road_detection(self, host_address: str, neighbor_address: str) -> dict:
+        """Test if two addresses are adjacent with road-aware detection using our API."""
+        resp = requests.post(f"{BASE_URL}/clusters/test_adjacency_with_road_detection", json={
+            "address1": host_address,
+            "address2": neighbor_address
+        })
+        
+        if resp.status_code == 200:
+            return resp.json()
+        return {"adjacent": False, "message": "API error"}
+        
+    def test_road_aware_adjacency(self):
+        """Handle option 4: Test Road-Aware Adjacency."""
+        self.clear_screen()
+        self.print_header()
+        
+        print("🛣️ ROAD-AWARE ADJACENCY TESTING")
+        print("=" * 50)
+        print("This tests if two homes can be connected without crossing roads.")
+        print("Perfect for homes with contiguous backyards on different streets.\n")
+        
+        # Get two addresses from user
+        address1 = input("Enter first address: ").strip()
+        if not address1:
+            print("❌ Address cannot be empty!")
+            input("Press Enter to continue...")
+            return
+            
+        address2 = input("Enter second address: ").strip()
+        if not address2:
+            print("❌ Address cannot be empty!")
+            input("Press Enter to continue...")
+            return
+        
+        print(f"\n🔍 Testing adjacency between:")
+        print(f"   Address 1: {address1}")
+        print(f"   Address 2: {address2}")
+        print("\n⏳ Processing...")
+        
+        # Test adjacency with road detection
+        result = self.test_adjacency_with_road_detection(address1, address2)
+        
+        print(f"\n📊 RESULTS:")
+        print(f"   Distance: {result.get('distance_miles', 0):.4f} miles")
+        print(f"   Same side of street: {'✅ Yes' if result.get('same_side_of_street') else '❌ No'}")
+        print(f"   No road crossing: {'✅ Yes' if result.get('no_road_crossing') else '❌ No'}")
+        print(f"   Final Result: {'✅ ADJACENT' if result.get('adjacent') else '❌ NOT ADJACENT'}")
+        print(f"   Details: {result.get('message', 'No details available')}")
+        
+        input("\nPress Enter to continue...")
+        
     def view_neighbor_addresses(self):
         """Handle option 2: View Neighbor Addresses for each Host Home."""
         self.clear_screen()
@@ -222,11 +381,15 @@ Enter your choice (1-3): """, end="")
                 elif choice == "2":
                     self.view_neighbor_addresses()
                 elif choice == "3":
+                    self.check_address_qualification()
+                elif choice == "4":
+                    self.test_road_aware_adjacency()
+                elif choice == "5":
                     print("\n👋 Thank you for using Mowthos Cluster Management!")
                     print("   Goodbye!")
                     break
                 else:
-                    print("\n❌ Invalid choice. Please enter 1, 2, or 3.")
+                    print("\n❌ Invalid choice. Please enter 1, 2, 3, or 4.")
                     input("Press Enter to continue...")
                     
             except KeyboardInterrupt:

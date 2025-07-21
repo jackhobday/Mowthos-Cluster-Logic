@@ -46,6 +46,31 @@ class TestAdjacencyResponse(BaseModel):
     message: str
 
 
+class TestAdjacencyWithStreetRequest(BaseModel):
+    address1: str
+    address2: str
+
+
+class TestAdjacencyWithStreetResponse(BaseModel):
+    adjacent: bool
+    same_side_of_street: bool
+    distance_miles: float
+    message: str
+
+
+class TestAdjacencyWithRoadDetectionRequest(BaseModel):
+    address1: str
+    address2: str
+
+
+class TestAdjacencyWithRoadDetectionResponse(BaseModel):
+    adjacent: bool
+    same_side_of_street: bool
+    no_road_crossing: bool
+    distance_miles: float
+    message: str
+
+
 @router.post("/geocode", response_model=GeocodeResponse)
 async def geocode_address(request: GeocodeRequest):
     """
@@ -93,6 +118,108 @@ async def test_adjacency(request: TestAdjacencyRequest):
     return TestAdjacencyResponse(
         adjacent=adjacent,
         road_barrier=road_barrier,
+        distance_miles=distance,
+        message=message
+    )
+
+
+@router.post("/test_adjacency_with_street", response_model=TestAdjacencyWithStreetResponse)
+async def test_adjacency_with_street(request: TestAdjacencyWithStreetRequest):
+    """
+    Test if two addresses are adjacent, including side-of-street logic.
+    This combines proximity check with odd/even house number parity.
+    """
+    # Geocode both addresses
+    coords1 = mapbox_service.geocode_address(request.address1)
+    coords2 = mapbox_service.geocode_address(request.address2)
+    
+    if not coords1 or not coords2:
+        raise HTTPException(status_code=400, detail="Could not geocode one or both addresses")
+    
+    lat1, lng1 = coords1
+    lat2, lng2 = coords2
+    
+    # Calculate distance
+    from geopy.distance import geodesic
+    distance = geodesic((lat1, lng1), (lat2, lng2)).miles
+    
+    # Check if addresses are adjacent (proximity only)
+    adjacent = mapbox_service.are_addresses_contiguously_adjacent(lat1, lng1, lat2, lng2)
+    
+    # Check if addresses are on same side of street
+    same_side_of_street = mapbox_service.are_addresses_on_same_side_of_street(
+        request.address1, request.address2
+    )
+    
+    # Final adjacency requires both proximity AND same side of street
+    final_adjacent = adjacent and same_side_of_street
+    
+    message = f"Distance: {distance:.4f} miles"
+    if same_side_of_street:
+        message += ", Same side of street"
+    else:
+        message += ", Different sides of street"
+    
+    return TestAdjacencyWithStreetResponse(
+        adjacent=final_adjacent,
+        same_side_of_street=same_side_of_street,
+        distance_miles=distance,
+        message=message
+    )
+
+
+@router.post("/test_adjacency_with_road_detection", response_model=TestAdjacencyWithRoadDetectionResponse)
+async def test_adjacency_with_road_detection(request: TestAdjacencyWithRoadDetectionRequest):
+    """
+    Test if two addresses are adjacent with road-aware detection.
+    This combines proximity check, side-of-street logic, AND road-crossing detection.
+    """
+    from geopy.distance import geodesic
+    
+    # Geocode both addresses
+    coords1 = mapbox_service.geocode_address(request.address1)
+    coords2 = mapbox_service.geocode_address(request.address2)
+    
+    if not coords1 or not coords2:
+        raise HTTPException(status_code=400, detail="Could not geocode one or both addresses")
+    
+    lat1, lng1 = coords1
+    lat2, lng2 = coords2
+    
+    # Calculate distance
+    distance = geodesic((lat1, lng1), (lat2, lng2)).miles
+    
+    # Check if addresses are adjacent (proximity only)
+    adjacent = mapbox_service.are_addresses_contiguously_adjacent(lat1, lng1, lat2, lng2)
+    
+    # Check if addresses are on same side of street
+    same_side_of_street = mapbox_service.are_addresses_on_same_side_of_street(
+        request.address1, request.address2
+    )
+    
+    # NEW: Check if accessible without crossing roads
+    no_road_crossing = mapbox_service.is_accessible_without_crossing_road(
+        (lat1, lng1), (lat2, lng2)
+    )
+    
+    # Final adjacency requires proximity AND same side of street AND no road crossing
+    final_adjacent = adjacent and same_side_of_street and no_road_crossing
+    
+    message = f"Distance: {distance:.4f} miles"
+    if same_side_of_street:
+        message += ", Same side of street"
+    else:
+        message += ", Different sides of street"
+    
+    if no_road_crossing:
+        message += ", No road crossing"
+    else:
+        message += ", Road crossing detected"
+    
+    return TestAdjacencyWithRoadDetectionResponse(
+        adjacent=final_adjacent,
+        same_side_of_street=same_side_of_street,
+        no_road_crossing=no_road_crossing,
         distance_miles=distance,
         message=message
     )
