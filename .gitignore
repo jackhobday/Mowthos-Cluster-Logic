@@ -210,3 +210,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Ignore debug images
+/debug_road_detection.png
+# Ignore cache directory
+/cache/
+# Ignore Python virtual environments
+venv/
+# Ignore local environment files
+.env
