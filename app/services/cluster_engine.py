@@ -1,7 +1,7 @@
 import csv
 import time
 import numpy as np
-from typing import List
+from typing import List, Optional
 from sklearn.neighbors import BallTree
 from app.services.mapbox_service import MapboxService
 from app.config import settings
@@ -11,6 +11,8 @@ import os
 ADDRESS_CSV = 'olmsted_addresses_559xx.csv'
 # Path to the registered host homes CSV
 HOST_HOMES_CSV = 'host_homes.csv'
+# Path to the registered neighbor homes CSV
+NEIGHBOR_HOMES_CSV = 'neighbor_homes.csv'
 
 # Haversine radius for 80 meters (in radians)
 EARTH_RADIUS_M = 6371000
@@ -34,6 +36,21 @@ def ensure_host_homes_csv():
                 'longitude': -92.1234
             })
 
+def ensure_neighbor_homes_csv():
+    """Create a template neighbor_homes.csv if it doesn't exist."""
+    if not os.path.exists(NEIGHBOR_HOMES_CSV):
+        with open(NEIGHBOR_HOMES_CSV, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['address', 'city', 'state', 'latitude', 'longitude'])
+            writer.writeheader()
+            # Example row
+            writer.writerow({
+                'address': '456 Elm St',
+                'city': 'Rochester',
+                'state': 'MN',
+                'latitude': 44.0124,
+                'longitude': -92.1235
+            })
+
 def load_addresses_from_csv(path: str) -> List[dict]:
     """Load addresses from a CSV file, returning a list of dicts with full address and lat/lon."""
     addresses = []
@@ -51,6 +68,34 @@ def load_addresses_from_csv(path: str) -> List[dict]:
                 'longitude': float(row['longitude'])
             })
     return addresses
+
+def register_host_home(address: str, city: str, state: str, latitude: Optional[float]=None, longitude: Optional[float]=None) -> dict:
+    """Register a host home, geocoding if lat/lon not provided. Appends to host_homes.csv."""
+    ensure_host_homes_csv()
+    if latitude is None or longitude is None:
+        coords = mapbox_service.geocode_address(f"{address}, {city}, {state}")
+        if not coords:
+            return {"success": False, "message": "Could not geocode address."}
+        latitude, longitude = coords
+    full_address = f"{address}, {city}, {state}"
+    with open(HOST_HOMES_CSV, 'a', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['address', 'city', 'state', 'latitude', 'longitude'])
+        writer.writerow({'address': address, 'city': city, 'state': state, 'latitude': latitude, 'longitude': longitude})
+    return {"success": True, "full_address": full_address, "latitude": latitude, "longitude": longitude}
+
+def register_neighbor_home(address: str, city: str, state: str, latitude: Optional[float]=None, longitude: Optional[float]=None) -> dict:
+    """Register a neighbor home, geocoding if lat/lon not provided. Appends to neighbor_homes.csv."""
+    ensure_neighbor_homes_csv()
+    if latitude is None or longitude is None:
+        coords = mapbox_service.geocode_address(f"{address}, {city}, {state}")
+        if not coords:
+            return {"success": False, "message": "Could not geocode address."}
+        latitude, longitude = coords
+    full_address = f"{address}, {city}, {state}"
+    with open(NEIGHBOR_HOMES_CSV, 'a', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['address', 'city', 'state', 'latitude', 'longitude'])
+        writer.writerow({'address': address, 'city': city, 'state': state, 'latitude': latitude, 'longitude': longitude})
+    return {"success": True, "full_address": full_address, "latitude": latitude, "longitude": longitude}
 
 def discover_neighbors_for_host(host_address: str) -> List[str]:
     """

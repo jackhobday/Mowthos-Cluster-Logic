@@ -30,12 +30,14 @@ class MowthosCLI:
         """Print the main menu."""
         print("""
 Options:
-1. Discover Neighbors for Host Home
-2. Test Road-Aware Adjacency (NEW)
-3. Check if Neighbor Qualifies for Host Home
-4. Exit
+1. Register Host Home
+2. Register Neighbor Home
+3. Discover Neighbors for Host Home
+4. Test Road-Aware Adjacency (NEW)
+5. Check if Neighbor Qualifies for Host Home
+6. Exit
 
-Enter your choice (1-4): """, end="")
+Enter your choice (1-6): """, end="")
         
     def test_road_aware_adjacency(self):
         """Handle option 4: Test Road-Aware Adjacency."""
@@ -116,6 +118,66 @@ Enter your choice (1-4): """, end="")
             print("\n❌ This address does not qualify for any registered host home within 80 meters and road connectivity.")
         input("\nPress Enter to continue...")
         
+    def register_host_home_cli(self):
+        self.clear_screen()
+        self.print_header()
+        print("\U0001F3E0 REGISTER HOST HOME")
+        print("=" * 50)
+        address = input("Enter street address: ").strip()
+        city = input("Enter city: ").strip()
+        state = input("Enter state: ").strip()
+        lat = input("Enter latitude (optional): ").strip()
+        lon = input("Enter longitude (optional): ").strip()
+        lat = float(lat) if lat else None
+        lon = float(lon) if lon else None
+        print("\n⏳ Registering host home...")
+        resp = requests.post(f"{BASE_URL}/clusters/register_host_home_csv", json={
+            "address": address,
+            "city": city,
+            "state": state,
+            "latitude": lat,
+            "longitude": lon
+        })
+        if resp.status_code == 200:
+            result = resp.json()
+            if result.get("success"):
+                print(f"\n✅ Registered host home: {result.get('full_address')} ({result.get('latitude')}, {result.get('longitude')})")
+            else:
+                print(f"\n❌ Failed: {result.get('message')}")
+        else:
+            print(f"\n❌ API error: {resp.text}")
+        input("\nPress Enter to continue...")
+
+    def register_neighbor_home_cli(self):
+        self.clear_screen()
+        self.print_header()
+        print("\U0001F465 REGISTER NEIGHBOR HOME")
+        print("=" * 50)
+        address = input("Enter street address: ").strip()
+        city = input("Enter city: ").strip()
+        state = input("Enter state: ").strip()
+        lat = input("Enter latitude (optional): ").strip()
+        lon = input("Enter longitude (optional): ").strip()
+        lat = float(lat) if lat else None
+        lon = float(lon) if lon else None
+        print("\n⏳ Registering neighbor home...")
+        resp = requests.post(f"{BASE_URL}/clusters/register_neighbor_home_csv", json={
+            "address": address,
+            "city": city,
+            "state": state,
+            "latitude": lat,
+            "longitude": lon
+        })
+        if resp.status_code == 200:
+            result = resp.json()
+            if result.get("success"):
+                print(f"\n✅ Registered neighbor home: {result.get('full_address')} ({result.get('latitude')}, {result.get('longitude')})")
+            else:
+                print(f"\n❌ Failed: {result.get('message')}")
+        else:
+            print(f"\n❌ API error: {resp.text}")
+        input("\nPress Enter to continue...")
+        
     def test_adjacency_with_road_detection(self, host_address: str, neighbor_address: str) -> dict:
         """Test if two addresses are adjacent with road-aware detection using our API."""
         resp = requests.post(f"{BASE_URL}/clusters/test_adjacency_with_road_detection", json={
@@ -138,17 +200,21 @@ Enter your choice (1-4): """, end="")
                 choice = input().strip()
                 
                 if choice == "1":
-                    self.discover_neighbors_cli()
+                    self.register_host_home_cli()
                 elif choice == "2":
-                    self.test_road_aware_adjacency()
+                    self.register_neighbor_home_cli()
                 elif choice == "3":
-                    self.check_neighbor_qualification_cli()
+                    self.discover_neighbors_cli()
                 elif choice == "4":
+                    self.test_road_aware_adjacency()
+                elif choice == "5":
+                    self.check_neighbor_qualification_cli()
+                elif choice == "6":
                     print("\n👋 Thank you for using Mowthos Cluster Management!")
                     print("   Goodbye!")
                     break
                 else:
-                    print("\n❌ Invalid choice. Please enter 1, 2, 3, or 4.")
+                    print("\n❌ Invalid choice. Please enter 1-6.")
                     input("Press Enter to continue...")
                     
             except KeyboardInterrupt:
