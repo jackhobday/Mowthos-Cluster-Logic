@@ -49,65 +49,6 @@ class MapboxService:
             logger.error(f"Geocoding error for {address}: {e}")
             return None
 
-    def are_addresses_adjacent(self, lat1: float, lng1: float, lat2: float, lng2: float) -> bool:
-        """
-        Check if two addresses are adjacent (within 0.05 miles = ~80 meters)
-        This allows for slightly larger clusters while still being restrictive
-        """
-        distance = geodesic((lat1, lng1), (lat2, lng2)).miles
-        logger.info(f"Distance between addresses: {distance:.4f} miles")
-        return distance <= 0.05  # Increased threshold for larger clusters
-
-    def check_road_barrier(self, lat1: float, lng1: float, lat2: float, lng2: float) -> bool:
-        """
-        Check if there's a road barrier between two points.
-        
-        REMOVED: TileQuery road detection logic since odd/even side-of-street logic 
-        provides sufficient filtering without additional API calls.
-        
-        Returns False (no barrier) to allow clustering based on proximity and side-of-street logic only.
-        """
-        # Road barrier detection removed - using odd/even side-of-street logic instead
-        return False  # No road barrier detected
-
-    def are_addresses_contiguously_adjacent(self, lat1: float, lng1: float, lat2: float, lng2: float) -> bool:
-        """
-        Enhanced adjacency check that considers proximity only.
-        Road barrier detection removed - using odd/even side-of-street logic instead.
-        Returns True only if addresses are close enough.
-        """
-        # Check proximity only - road barriers handled by side-of-street logic
-        if not self.are_addresses_adjacent(lat1, lng1, lat2, lng2):
-            logger.info("Addresses too far apart")
-            return False
-        
-        logger.info("Addresses are adjacent (proximity check passed)")
-        return True
-
-    def are_addresses_on_same_side_of_street(self, address1: str, address2: str) -> bool:
-        """
-        Check if two addresses are on the same side of the street using odd/even parity.
-        Returns True if both addresses have the same parity (both odd or both even).
-        """
-        host_number = self._extract_house_number(address1)
-        neighbor_number = self._extract_house_number(address2)
-        
-        if host_number is None or neighbor_number is None:
-            return False
-        
-        # Check if both numbers have the same parity (both odd or both even)
-        host_parity = host_number % 2
-        neighbor_parity = neighbor_number % 2
-        
-        return host_parity == neighbor_parity
-    
-    def _extract_house_number(self, address: str) -> Optional[int]:
-        """Extract house number from address string."""
-        parts = address.split()
-        if parts and parts[0].isdigit():
-            return int(parts[0])
-        return None
-    
     def is_accessible_without_crossing_road(self, host_coords: Tuple[float, float], 
                                           candidate_coords: Tuple[float, float]) -> bool:
         """
@@ -123,16 +64,18 @@ class MapboxService:
         """
         if not OSMNX_AVAILABLE:
             logger.warning("OSMnx not available. Skipping road-crossing check.")
-            return True  # Default to allowing if OSMnx unavailable
+            return False  # Default to allowing if OSMnx unavailable
         
         try:
             import time
+            import matplotlib.pyplot as plt
+            from shapely.geometry import LineString, Point
             start_time = time.time()
             
             logger.info(f"Starting road detection: Host {host_coords} -> Candidate {candidate_coords}")
             
-            # Download road network near the host home (100m radius) with timeout
-            G = ox.graph_from_point(host_coords, dist=100, network_type='drive')
+            # Download road network near the host home (300m radius) with timeout
+            G = ox.graph_from_point(host_coords, dist=300, network_type='drive')
             edges = ox.graph_to_gdfs(G, nodes=False)
             
             logger.info(f"Found {len(edges)} road segments in area")
@@ -152,14 +95,59 @@ class MapboxService:
             
             logger.info(f"Testing line: {line.coords[:]}")
             
+            # Plotting for debug
+            fig, ax = plt.subplots(figsize=(8, 8))
+            # Plot all road segments
+            for geom in edges['geometry']:
+                try:
+                    x, y = geom.exterior.xy
+                    ax.plot(x, y, color='gray', alpha=0.5)
+                except Exception:
+                    # Some geometries may not have exterior (e.g., MultiPolygon)
+                    pass
+            # Plot the line between homes
+            x, y = line.xy
+            ax.plot(x, y, color='blue', linewidth=2, label='Home-to-Home Line')
+            # Plot the two homes
+            ax.scatter([host_coords[1], candidate_coords[1]], [host_coords[0], candidate_coords[0]], color='red', s=100, zorder=5, label='Homes')
             # Check intersection with any road segment
-            intersection_count = 0
+            intersection_found = False
             for i, geom in enumerate(edges['geometry']):
                 if line.intersects(geom):
-                    logger.info(f"Road intersection detected with road segment {i}. Rejecting candidate.")
-                    intersection_count += 1
-                    return False
-            
+                    intersection = line.intersection(geom)
+                    if intersection.is_empty:
+                        continue
+                    intersection_found = True
+                    # Plot intersection point(s)
+                    if intersection.geom_type == 'Point':
+                        ax.plot(intersection.x, intersection.y, 'go', markersize=12, label='Intersection' if i == 0 else None)
+                    elif intersection.geom_type == 'MultiPoint':
+                        for pt in intersection.geoms:
+                            ax.plot(pt.x, pt.y, 'go', markersize=12, label='Intersection' if i == 0 else None)
+                    elif intersection.geom_type == 'LineString':
+                        x, y = intersection.xy
+                        ax.plot(x, y, 'g--', linewidth=3, label='Intersection Line' if i == 0 else None)
+                    elif intersection.geom_type == 'MultiLineString':
+                        for linestr in intersection.geoms:
+                            x, y = linestr.xy
+                            ax.plot(x, y, 'g--', linewidth=3, label='Intersection Line' if i == 0 else None)
+                    elif intersection.geom_type == 'GeometryCollection':
+                        for geom_part in intersection.geoms:
+                            if geom_part.geom_type == 'Point':
+                                ax.plot(geom_part.x, geom_part.y, 'go', markersize=12, label='Intersection' if i == 0 else None)
+                            elif geom_part.geom_type == 'LineString':
+                                x, y = geom_part.xy
+                                ax.plot(x, y, 'g--', linewidth=3, label='Intersection Line' if i == 0 else None)
+            ax.legend()
+            ax.set_title('Road Detection Debug')
+            plt.xlabel('Longitude')
+            plt.ylabel('Latitude')
+            plt.savefig('debug_road_detection.png')
+            plt.close(fig)
+            # End plotting
+            if intersection_found:
+                logger.info("Road intersection detected. Rejecting candidate.")
+                return False
             elapsed_time = time.time() - start_time
             logger.info(f"No road intersection detected. Allowing connection. (Took {elapsed_time:.2f}s)")
             return True
