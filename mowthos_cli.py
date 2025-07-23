@@ -2,6 +2,9 @@ import requests
 import json
 import time
 from typing import Dict, List
+import sys
+sys.path.append('.')
+from app.services.cluster_engine import discover_neighbors_for_host, find_qualified_host_for_neighbor
 
 BASE_URL = "http://localhost:8000"
 
@@ -27,10 +30,12 @@ class MowthosCLI:
         """Print the main menu."""
         print("""
 Options:
-1. Test Road-Aware Adjacency (NEW)
-2. Exit
+1. Discover Neighbors for Host Home
+2. Test Road-Aware Adjacency (NEW)
+3. Check if Neighbor Qualifies for Host Home
+4. Exit
 
-Enter your choice (1-2): """, end="")
+Enter your choice (1-4): """, end="")
         
     def test_road_aware_adjacency(self):
         """Handle option 4: Test Road-Aware Adjacency."""
@@ -72,6 +77,45 @@ Enter your choice (1-2): """, end="")
         
         input("\nPress Enter to continue...")
         
+    def discover_neighbors_cli(self):
+        self.clear_screen()
+        self.print_header()
+        print("\U0001F50D DISCOVER NEIGHBORS FOR HOST HOME (REGISTERED ONLY)")
+        print("=" * 50)
+        print("Note: Only homes registered as hosts (in host_homes.csv) are considered as host homes.")
+        address = input("Enter the full host home address (street, city, state): ").strip()
+        if not address:
+            print("❌ Address cannot be empty!")
+            input("Press Enter to continue...")
+            return
+        print(f"\n🔍 Discovering qualified neighbors for: {address}\n")
+        neighbors = discover_neighbors_for_host(address)
+        print(f"\n✅ Found {len(neighbors)} qualified neighbors:")
+        for i, n in enumerate(neighbors, 1):
+            print(f"   {i}. {n}")
+        input("\nPress Enter to continue...")
+        
+    def check_neighbor_qualification_cli(self):
+        self.clear_screen()
+        self.print_header()
+        print("\U0001F50D CHECK IF NEIGHBOR QUALIFIES FOR REGISTERED HOST HOME")
+        print("=" * 50)
+        print("Note: Only homes registered as hosts (in host_homes.csv) are considered as host homes.")
+        address = input("Enter the full neighbor address (street, city, state): ").strip()
+        if not address:
+            print("❌ Address cannot be empty!")
+            input("Press Enter to continue...")
+            return
+        print(f"\n🔍 Checking qualification for: {address}\n")
+        qualified_hosts = find_qualified_host_for_neighbor(address)
+        if qualified_hosts:
+            print(f"\n✅ This address qualifies for {len(qualified_hosts)} registered host home(s):")
+            for i, h in enumerate(qualified_hosts, 1):
+                print(f"   {i}. {h}")
+        else:
+            print("\n❌ This address does not qualify for any registered host home within 80 meters and road connectivity.")
+        input("\nPress Enter to continue...")
+        
     def test_adjacency_with_road_detection(self, host_address: str, neighbor_address: str) -> dict:
         """Test if two addresses are adjacent with road-aware detection using our API."""
         resp = requests.post(f"{BASE_URL}/clusters/test_adjacency_with_road_detection", json={
@@ -94,13 +138,17 @@ Enter your choice (1-2): """, end="")
                 choice = input().strip()
                 
                 if choice == "1":
-                    self.test_road_aware_adjacency()
+                    self.discover_neighbors_cli()
                 elif choice == "2":
+                    self.test_road_aware_adjacency()
+                elif choice == "3":
+                    self.check_neighbor_qualification_cli()
+                elif choice == "4":
                     print("\n👋 Thank you for using Mowthos Cluster Management!")
                     print("   Goodbye!")
                     break
                 else:
-                    print("\n❌ Invalid choice. Please enter 1 or 2.")
+                    print("\n❌ Invalid choice. Please enter 1, 2, 3, or 4.")
                     input("Press Enter to continue...")
                     
             except KeyboardInterrupt:
